@@ -36,7 +36,7 @@ AI conversations get **long**. Really long. Scrolling through 50+ rounds of chat
 
 ```bash
 # Clone the repo
-git clone https://github.com/user/chat-buoy.git
+git clone https://github.com/alexliuxiaoting/chat-buoy.git
 cd chat-buoy
 
 # Install dependencies

@@ -12,51 +12,34 @@ body {
 }
 
 .popup {
-  padding: 16px 18px;
+  padding: 16px 20px 14px;
 }
 
-/* ---- Header ---- */
+/* ---- Header: Brand + Title + Status + Version ---- */
 
 .popup-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
 }
 
-.popup-logo {
-  color: #818cf8;
+.popup-brand {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: linear-gradient(135deg, #6366f1, #818cf8);
+  color: #fff;
+  padding: 3px 6px;
+  border-radius: 5px;
+  line-height: 1;
   flex-shrink: 0;
 }
 
 .popup-title {
   font-size: 15px;
   font-weight: 700;
-  background: linear-gradient(135deg, #6366f1, #818cf8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: #e8eaed;
   flex: 1;
-}
-
-.popup-version {
-  font-size: 11px;
-  color: #6b7280;
-  flex-shrink: 0;
-}
-
-/* ---- Status ---- */
-
-.popup-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #9aa0a6;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
-  margin-bottom: 14px;
 }
 
 .status-dot {
@@ -69,7 +52,23 @@ body {
 
 .status-dot.active {
   background: #34d399;
-  box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.5);
+}
+
+.popup-version {
+  font-size: 11px;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+/* ---- Accent gradient line ---- */
+
+.popup-accent {
+  height: 2px;
+  margin: 12px 0;
+  border-radius: 1px;
+  background: linear-gradient(90deg, #6366f1, #818cf8, #34d399);
+  opacity: 0.6;
 }
 
 /* ---- Footer ---- */
@@ -78,6 +77,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
 }
 
 .popup-link {
@@ -89,4 +89,20 @@ body {
 
 .popup-link:hover {
   color: #a5b4fc;
+}
+
+.popup-sep {
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.popup-icon-link {
+  color: #6b7280;
+  transition: color 0.2s;
+  display: flex;
+  align-items: center;
+}
+
+.popup-icon-link:hover {
+  color: #e8eaed;
 }

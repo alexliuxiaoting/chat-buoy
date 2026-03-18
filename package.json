@@ -13,6 +13,14 @@
     "preview": "vite preview"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexliuxiaoting/chat-buoy.git"
+  },
+  "homepage": "https://chatbuoy.com",
+  "bugs": {
+    "url": "https://github.com/alexliuxiaoting/chat-buoy/issues"
+  },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",
     "@types/chrome": "^0.0.287",
