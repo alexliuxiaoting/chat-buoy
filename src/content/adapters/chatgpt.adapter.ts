@@ -6,16 +6,17 @@ import { PREVIEW_MAX_LENGTH } from '@/shared/constants';
  * ChatGPT Adapter
  *
  * Handles DOM parsing for chatgpt.com and chat.openai.com.
- * ChatGPT renders conversations as a series of article-like groups,
- * each containing a user or assistant message.
+ * ChatGPT renders conversations as a series of turn sections,
+ * each containing one or more user/assistant sub-messages.
  *
  * DOM Structure (as of 2026-03):
- *   <div class="flex flex-col ..."> (scroll container)
- *     <article data-testid="conversation-turn-N">
- *       <div data-message-author-role="user|assistant">
- *         ...message content...
+ *   <div data-scroll-root> (scroll container)
+ *     <section data-testid="conversation-turn-N" data-turn="user|assistant">
+ *       <div data-message-author-role="user|assistant" data-message-id="...">
+ *         <div class="markdown ...">...prose content...</div>
  *       </div>
- *     </article>
+ *       <!-- assistant turns may have multiple sub-messages -->
+ *     </section>
  *   </div>
  */
 export class ChatGPTAdapter implements SiteAdapter {
@@ -33,6 +34,7 @@ export class ChatGPTAdapter implements SiteAdapter {
     // ChatGPT uses a main scrollable container for conversation
     // Try multiple selectors for resilience against UI updates
     return (
+      document.querySelector('[data-scroll-root]') ??
       document.querySelector('main div.overflow-y-auto') ??
       document.querySelector('main [class*="react-scroll-to-bottom"]') ??
       document.querySelector('main')
@@ -40,20 +42,15 @@ export class ChatGPTAdapter implements SiteAdapter {
   }
 
   queryMessageElements(): Element[] {
-    // Each conversation turn is an <article> with data-testid
-    const articles = document.querySelectorAll(
-      'article[data-testid^="conversation-turn-"]'
+    // Each conversation turn is a <section> (or <article> in older versions)
+    // with data-testid. A single turn may contain multiple sub-messages
+    // (tool calls, streaming steps, etc.), but we always treat the turn
+    // as the atomic unit to avoid splitting one reply into many items.
+    const turns = document.querySelectorAll(
+      '[data-testid^="conversation-turn-"]'
     );
-    if (articles.length > 0) {
-      return Array.from(articles);
-    }
-
-    // Fallback: look for elements with message author role attribute
-    const roleElements = document.querySelectorAll(
-      '[data-message-author-role]'
-    );
-    if (roleElements.length > 0) {
-      return Array.from(roleElements);
+    if (turns.length > 0) {
+      return Array.from(turns);
     }
 
     // Last resort fallback: look for the message groupings
@@ -103,37 +100,51 @@ export class ChatGPTAdapter implements SiteAdapter {
   // --- Private helpers ---
 
   private extractRole(element: Element): 'user' | 'assistant' | null {
-    // Check data-message-author-role on self or children
-    const roleAttr =
-      element.getAttribute('data-message-author-role') ??
-      element.querySelector('[data-message-author-role]')
-        ?.getAttribute('data-message-author-role');
+    // Prefer the data-turn attribute on the <section> element itself
+    const turnAttr = element.getAttribute('data-turn');
+    if (turnAttr === 'user') return 'user';
+    if (turnAttr === 'assistant') return 'assistant';
 
-    if (roleAttr === 'user') return 'user';
-    if (roleAttr === 'assistant') return 'assistant';
+    // Check data-message-author-role on self
+    const selfRole = element.getAttribute('data-message-author-role');
+    if (selfRole === 'user') return 'user';
+    if (selfRole === 'assistant') return 'assistant';
 
-    // Heuristic: testid includes turn number, even = user, odd = assistant
-    const testId = element.getAttribute('data-testid') ?? '';
-    const turnMatch = testId.match(/conversation-turn-(\d+)/);
-    if (turnMatch) {
-      const turnNum = parseInt(turnMatch[1], 10);
-      // In ChatGPT, turn 1 = system, turn 2 = user, turn 3 = assistant, ...
-      // But this is fragile; prefer data-message-author-role
+    // A turn may contain multiple sub-messages (e.g. tool calls).
+    // Scan all children with a role attribute and pick the dominant one.
+    const children = element.querySelectorAll('[data-message-author-role]');
+    if (children.length > 0) {
+      for (const child of children) {
+        const r = child.getAttribute('data-message-author-role');
+        if (r === 'user') return 'user';
+      }
+      return 'assistant';
     }
 
     return null;
   }
 
   private extractText(element: Element): string {
-    // Try to find the prose content within the message
-    const proseEl =
-      element.querySelector('.markdown') ??
-      element.querySelector('[data-message-author-role] + div') ??
-      element.querySelector('.whitespace-pre-wrap');
+    // Collect text from ALL prose sub-elements within the turn.
+    // A single turn can have multiple .markdown / .whitespace-pre-wrap
+    // blocks (e.g. multi-step AI replies with tool calls).
+    const proseEls = element.querySelectorAll(
+      '.markdown, .whitespace-pre-wrap'
+    );
 
-    const target = proseEl ?? element;
-    const text = (target.textContent ?? '').trim();
-    return text;
+    if (proseEls.length > 0) {
+      const parts: string[] = [];
+      for (const el of proseEls) {
+        const t = (el.textContent ?? '').trim();
+        if (t) parts.push(t);
+      }
+      return parts.join(' ');
+    }
+
+    // Fallback: grab the first child with role, or the element itself
+    const roleEl = element.querySelector('[data-message-author-role] + div');
+    const target = roleEl ?? element;
+    return (target.textContent ?? '').trim();
   }
 
   private truncate(text: string, maxLen: number): string {
