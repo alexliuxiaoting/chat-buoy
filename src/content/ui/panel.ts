@@ -1,21 +1,24 @@
 import type { NavItem } from '@/shared/types';
 import type { NavigationEngine } from '../engine/navigation';
-import { SHADOW_HOST_ID } from '@/shared/constants';
+import { SHADOW_HOST_ID, DRAG_THRESHOLD } from '@/shared/constants';
 import { getThemeColors, applyTheme } from './theme';
 import panelCSS from './panel.css?inline';
 
-/** Inline SVG lifebuoy icon (renders on all platforms, unlike 🛟 emoji) */
+/** Inline SVG lifebuoy icon (brand mark) */
 const BUOY_SVG = `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg>`;
+
+/** Person silhouette icon — represents user messages */
+const USER_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>`;
+
+/** Sparkle icon — represents AI / assistant messages */
+const SPARKLE_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z"/></svg>`;
 
 /**
  * NavigationPanel — Sidebar TOC (expanded) + FAB (collapsed).
  *
  * Two modes:
- * - EXPANDED: A compact TOC sidebar at the top-right of the page
- * - COLLAPSED: A floating ball at the bottom-right; click to re-expand
- *
- * The panel acts like a persistent table of contents that the user
- * can minimize when they want more screen space.
+ * - EXPANDED: A compact TOC sidebar, draggable via header
+ * - COLLAPSED: A floating ball at bottom-right; click to re-expand
  */
 export class NavigationPanel {
   private host: HTMLElement;
@@ -25,8 +28,6 @@ export class NavigationPanel {
   // Sidebar elements
   private sidebarEl!: HTMLElement;
   private listEl!: HTMLElement;
-  private progressFill!: HTMLElement;
-  private progressText!: HTMLElement;
   private countEl!: HTMLElement;
 
   // FAB elements
@@ -38,7 +39,14 @@ export class NavigationPanel {
   private collapsed = false;
   private currentItems: NavItem[] = [];
   private themeObserver: MutationObserver | null = null;
-  private lastClickedPos = -1;  // tracks clicked nav position for progress
+
+  // Drag state
+  private isDragging = false;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private dragStartLeft = 0;
+  private dragStartTop = 0;
+  private hasDragged = false;
 
   constructor(
     private engine: NavigationEngine,
@@ -100,7 +108,7 @@ export class NavigationPanel {
   private buildSidebar(): void {
     this.sidebarEl = this.el('div', 'cb-sidebar');
 
-    // Header
+    // Header (also serves as the drag handle)
     const header = this.el('div', 'cb-header');
     const logo = this.el('span', 'cb-logo');
     logo.innerHTML = BUOY_SVG;
@@ -108,29 +116,24 @@ export class NavigationPanel {
     title.textContent = 'Chat Buoy';
     const collapseBtn = this.el('button', 'cb-btn');
     collapseBtn.textContent = '−';
-    collapseBtn.title = 'Minimize to floating ball';
+    collapseBtn.title = 'Minimize';
     collapseBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.collapse();
     });
     header.append(logo, title, collapseBtn);
 
+    // Drag support on header
+    this.initDrag(header);
+
     // Navigation list
     this.listEl = this.el('div', 'cb-nav-list');
 
-    // Footer
+    // Footer (simplified: just turn count)
     const footer = this.el('div', 'cb-footer');
-    const progress = this.el('div', 'cb-progress');
-    const progressBar = this.el('div', 'cb-progress-bar');
-    this.progressFill = this.el('div', 'cb-progress-fill');
-    this.progressFill.style.width = '0%';
-    progressBar.appendChild(this.progressFill);
-    this.progressText = this.el('span', 'cb-progress-text');
-    this.progressText.textContent = '0%';
-    progress.append(progressBar, this.progressText);
     this.countEl = this.el('span', 'cb-count');
-    this.countEl.textContent = '0';
-    footer.append(progress, this.countEl);
+    this.countEl.textContent = '0 turns';
+    footer.appendChild(this.countEl);
 
     this.sidebarEl.append(header, this.listEl, footer);
   }
@@ -150,6 +153,66 @@ export class NavigationPanel {
   }
 
   // ================================================================
+  // Drag Logic
+  // ================================================================
+
+  private initDrag(handle: HTMLElement): void {
+    handle.addEventListener('mousedown', (e: MouseEvent) => {
+      // Only left-click
+      if (e.button !== 0) return;
+      // Don't start drag from button clicks
+      if ((e.target as HTMLElement).closest('.cb-btn')) return;
+
+      e.preventDefault();
+      this.isDragging = true;
+      this.hasDragged = false;
+      this.dragStartX = e.clientX;
+      this.dragStartY = e.clientY;
+
+      const rect = this.host.getBoundingClientRect();
+      this.dragStartLeft = rect.left;
+      this.dragStartTop = rect.top;
+
+      this.host.classList.add('dragging');
+      document.addEventListener('mousemove', this.onDragMove);
+      document.addEventListener('mouseup', this.onDragEnd);
+    });
+  }
+
+  private onDragMove = (e: MouseEvent): void => {
+    if (!this.isDragging) return;
+
+    const dx = e.clientX - this.dragStartX;
+    const dy = e.clientY - this.dragStartY;
+
+    if (!this.hasDragged && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) {
+      return; // Don't start drag until threshold is exceeded
+    }
+    this.hasDragged = true;
+
+    const newLeft = this.dragStartLeft + dx;
+    const newTop = this.dragStartTop + dy;
+
+    // Clamp within viewport
+    const maxLeft = window.innerWidth - 60;
+    const maxTop = window.innerHeight - 40;
+    const clampedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+    const clampedTop = Math.max(0, Math.min(newTop, maxTop));
+
+    // Switch from right-based to left-based positioning
+    this.host.style.right = 'auto';
+    this.host.style.left = `${clampedLeft}px`;
+    this.host.style.top = `${clampedTop}px`;
+  };
+
+  private onDragEnd = (): void => {
+    this.isDragging = false;
+    this.host.classList.remove('dragging');
+    document.removeEventListener('mousemove', this.onDragMove);
+    document.removeEventListener('mouseup', this.onDragEnd);
+  };
+
+  // ================================================================
   // Collapse / Expand
   // ================================================================
 
@@ -161,7 +224,6 @@ export class NavigationPanel {
   private expand(): void {
     this.collapsed = false;
     this.host.classList.remove('collapsed');
-    // Re-render and scroll to active
     this.renderItems();
   }
 
@@ -191,8 +253,8 @@ export class NavigationPanel {
       this.listEl.appendChild(fragment);
     }
 
-    this.updateProgress(items);
-    this.countEl.textContent = `${this.currentItems.length}`;
+    const total = this.currentItems.length;
+    this.countEl.textContent = total === 1 ? '1 turn' : `${total} turns`;
 
     if (!this.collapsed) {
       this.scrollActiveIntoView();
@@ -205,26 +267,18 @@ export class NavigationPanel {
     const el = this.el('div', `cb-nav-item ${roleClass}${activeClass}`);
     el.style.animationDelay = `${displayIndex * 0.025}s`;
 
-    // Role dot
-    const roleDot = this.el('span', `cb-role-dot ${item.role}`);
-
-    // Index badge
-    const indexBadge = this.el('span', 'cb-nav-index');
-    indexBadge.textContent = `${item.index + 1}`;
+    // Role icon
+    const roleIcon = this.el('span', 'cb-role-icon');
+    roleIcon.innerHTML = item.role === 'user' ? USER_SVG : SPARKLE_SVG;
 
     // Preview text
     const preview = this.el('span', 'cb-nav-preview');
     preview.textContent = item.preview;
 
-    el.append(roleDot, indexBadge, preview);
+    el.append(roleIcon, preview);
 
     el.addEventListener('click', () => {
-      // Track the clicked position for immediate progress update
-      const pos = this.currentItems.findIndex((ci) => ci.id === item.id);
-      if (pos >= 0) this.lastClickedPos = pos;
       this.engine.scrollTo(item.id);
-      // Immediately refresh progress
-      this.updateProgress(this.currentItems);
     });
 
     return el;
@@ -234,35 +288,6 @@ export class NavigationPanel {
     const count = this.currentItems.length;
     this.badgeEl.textContent = count > 99 ? '99+' : `${count}`;
     this.badgeEl.classList.toggle('visible', count > 0);
-  }
-
-  private updateProgress(visibleItems: NavItem[]): void {
-    const total = this.currentItems.length;
-    if (total === 0) {
-      this.progressFill.style.width = '0%';
-      this.progressText.textContent = '0%';
-      return;
-    }
-
-    // Find the furthest-down active item by its position within currentItems
-    const activeIds = new Set(
-      visibleItems.filter((i) => i.isActive).map((i) => i.id)
-    );
-
-    let maxPos = this.lastClickedPos;  // start from last clicked position
-    for (let i = 0; i < this.currentItems.length; i++) {
-      if (activeIds.has(this.currentItems[i].id) && i > maxPos) {
-        maxPos = i;
-      }
-    }
-
-    let progress = 0;
-    if (maxPos >= 0) {
-      progress = Math.round(((maxPos + 1) / total) * 100);
-    }
-
-    this.progressFill.style.width = `${progress}%`;
-    this.progressText.textContent = `${progress}%`;
   }
 
   private scrollActiveIntoView(): void {
